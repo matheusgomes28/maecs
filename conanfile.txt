@@ -1,0 +1,7 @@
+[requires]
+gtest/1.13.0
+raylib/5.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
