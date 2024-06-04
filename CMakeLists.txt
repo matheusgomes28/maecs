@@ -16,5 +16,5 @@ if (BUILD_PROFILER)
     add_subdirectory(profiler)
 endif()
 
-# enable_testing()
-# add_subdirectory(tests)
+enable_testing()
+add_subdirectory(tests)

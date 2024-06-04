@@ -42,7 +42,7 @@
             "cacheVariables": {
                 "CMAKE_CXX_COMPILER": "g++",
                 "CMAKE_C_COMPILER": "gcc",
-                "CMAKE_CXX_FLAGS_INIT": "$env{CMAKE_CXX_FLAGS} -Werror -Wall -Wextra -pedantic"
+                "CMAKE_CXX_FLAGS_INIT": "$env{CMAKE_CXX_FLAGS} -Werror -Wall -Wextra -pedantic -O2"
             }
         },
         {
