@@ -16,6 +16,26 @@ module;
 
 export module maecs;
 
+export namespace maecs
+{
+    using EntityId = std::uint64_t;
+    using Bitmask = std::uint64_t;
+    using ComponentId = decltype(std::declval<std::type_info>().hash_code());
+    using ComponentName = decltype(std::declval<std::type_info>().name());
+} // maecs
+
+/**************************************************
+ * Internal type defs to make functions a little
+ * less verbose
+**************************************************/
+/// @brief Type for a map storing {entity_id, entity_bitmask}
+using EntityBitmaskMap = ankerl::unordered_dense::map<maecs::EntityId, maecs::Bitmask>;
+
+/// @brief Type for a map storing {component_name, {component_id, variant_position}}
+using ComponentIdMap = ankerl::unordered_dense::map<maecs::ComponentName, std::pair<maecs::ComponentId, std::size_t>>;
+
+
+
 // What happens if Target is not in List types??
 /// @brief Gets the index of a type in the list of templated types
 /// @tparam Target should be the type we want to find the index for
@@ -32,14 +52,17 @@ constexpr std::size_t get_type_index()
 }
 
 template <typename C>
-void add_component_id_one(ankerl::unordered_dense::map<decltype(std::declval<std::type_info>().name()), std::pair<decltype(std::declval<std::type_info>().hash_code()), std::size_t>>& map, std::size_t index)
+void add_component_id_one(ComponentIdMap& map, std::size_t index)
 {
     std::type_info const& type_info = typeid(C);
     map.insert({type_info.name(), {type_info.hash_code(), index}});
 }
 
+/// @brief This adds an entry to the component name-{id, index} map
+/// so users can get which position in the variant a type is, as well as
+/// the component ID for looking up into the component-entity map.
 template <typename C, typename... Cs>
-void add_component_id(ankerl::unordered_dense::map<decltype(std::declval<std::type_info>().name()), std::pair<decltype(std::declval<std::type_info>().hash_code()), std::size_t>>& map, std::size_t index)
+void add_component_id(ComponentIdMap& map, std::size_t index)
 {
     add_component_id_one<C>(map, index);
 
@@ -60,11 +83,30 @@ std::vector<std::uint64_t> transform_ent_ids(std::vector<std::pair<std::uint64_t
     return result;
 }
 
-export namespace maecs {
-    using EntityId = std::uint64_t;
-    using ComponentId = decltype(std::declval<std::type_info>().hash_code());
-    using ComponentNameType = decltype(std::declval<std::type_info>().name());
+inline void update_entity_bitmask(
+    std::uint64_t entity_id,
+    std::size_t component_index,
+    EntityBitmaskMap& entity_bitmasks
+)
+{
+    static_assert(sizeof(std::size_t) == sizeof(std::uint64_t));
 
+    // Call the entity update function here
+    auto const bitmask = (0b1 << component_index);
+
+    // TODO : make this into a function (update_bitmask(entity, new_bitmask))
+    auto bitmask_found = entity_bitmasks.find(entity_id);
+    if (bitmask_found == end(entity_bitmasks))
+    {
+        entity_bitmasks[entity_id] = bitmask;
+    }
+    else
+    {
+        bitmask_found->second |= bitmask;
+    }
+}
+
+export namespace maecs {
     EntityId generate_entity_id()
     {
         static EntityId curr_id = 0;
@@ -78,6 +120,8 @@ export namespace maecs {
     template <typename... Cs>
     class Registry {
     public:
+
+        using tuple_t = std::tuple<std::optional<Cs>...>;
 
         // Whenever we init Registry, we want to iterate over the
         // types of Cs... and store the <name, id> in the _component_ids;
@@ -200,8 +244,42 @@ export namespace maecs {
                 found->second.push_back({ent_id, component});
                 return;
             }
-
             _entities.insert({component_hash, {{ent_id, component}}});
+
+            // Updates the entity bitmask with whatever new entity bitmask we get
+            update_entity_bitmask(ent_id, index, _entity_bitmask);
+        }
+
+        void new_set(EntityId ent_id, Component<Cs...> const& component)
+        {
+            auto constexpr index = component.index();
+            // Expects(index != std::variant_npos);
+
+            auto const component_hash = _type_arrays[index]->has_code();
+
+            // We need to move the current component information out
+            // of the previous bitmask
+            auto current_tuple_iter = end(_new_entity_components);
+            if (auto current_bitmask_iter = _entity_bitmask.find(ent_id); current_bitmask_iter != end(_entity_bitmask))
+            {
+                // get the tuple here
+                current_tuple_iter = _new_entity_components.find(current_bitmask_iter->second);
+                // Expects(current_tuple_iter != end(_new_entity_component));
+            }
+
+            if (current_tuple_iter != end(_new_entity_components))
+            {
+                auto const new_bitmask = current_tuple_iter->first | (1 << index);
+                auto entity_data = extract(current_tuple_iter);
+                // gonna be difficult to get move semantics right on this
+                // without the hardcoded types with std::optional
+                std::get<index>(entity_data) = get<index>(component);
+
+                // Add the new entity_data to the _new_entity_components[new_bitmask]
+                // if it's not already there
+            }
+
+            // TODO : Finish this implementation
         }
 
         template <typename Head, typename... Tail>
@@ -220,14 +298,17 @@ export namespace maecs {
     private:
         // This will store the component Ids for each class given as parameter to Registry
         // the value is of type pair<ComponentId, index in variant>
-        ankerl::unordered_dense::map<ComponentNameType, std::pair<ComponentId, std::size_t>> _component_ids;
+        ankerl::unordered_dense::map<ComponentName, std::pair<ComponentId, std::size_t>> _component_ids;
 
         // This will store the entity-component data
         ankerl::unordered_dense::map<ComponentId, std::vector<std::pair<EntityId, Component<Cs...>>>> _entities;
 
+        // Store all the current entity -> bitmask values
+        ankerl::unordered_dense::map<EntityId, Bitmask> _entity_bitmask;
+
         // Wanna create the entity mask -> entity data
         // 011 -> {ent_id, {c1, c2}} = ent_id has components in indexes 0, 1 of the Cs... and the data is in vector
-        // ankerl::unordered_dense::map<std::uint64_t, std::vector<std::pair<EntityId, std::vector<Component<Cs...>>>>>;
+        ankerl::unordered_dense::map<Bitmask, std::vector<std::pair<EntityId, tuple_t>>> _new_entity_components;
 
         // 010 -> {ent_id, {c1}}
         // add c2 to ent_id ?
@@ -236,29 +317,6 @@ export namespace maecs {
 
         // Array to store all the type_ids in order of Components declared in variant
         std::array<std::type_info const*, sizeof...(Cs)> _type_arrays;
-
     };
 
 }
-
-
-/*
-struct Square{
-    int top;
-    int left;
-    int width;
-    int height;
-};
-
-struct Circle{
-    int center_x;
-    int center_y;
-    int radius;
-};
-
-
-Registry<Square, Circle> registry;
-
-// -> storing each id in the instance of registry {Square = 0, Circle = 1};
-// -> calcualting the id for the compo happens at the contructor
-*/
