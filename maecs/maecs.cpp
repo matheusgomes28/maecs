@@ -34,7 +34,9 @@ using EntityBitmaskMap = ankerl::unordered_dense::map<maecs::EntityId, maecs::Bi
 /// @brief Type for a map storing {component_name, {component_id, variant_position}}
 using ComponentIdMap = ankerl::unordered_dense::map<maecs::ComponentName, std::pair<maecs::ComponentId, std::size_t>>;
 
-
+/// @brief Type for the cache-friendly (although it's not quite) entity-component type
+template <typename... Cs>
+using EntityComponent = std::tuple<std::optional<Cs>...>;
 
 // What happens if Target is not in List types??
 /// @brief Gets the index of a type in the list of templated types
@@ -104,6 +106,26 @@ inline void update_entity_bitmask(
     {
         bitmask_found->second |= bitmask;
     }
+}
+
+// ankerl::unordered_dense::map<Bitmask, std::vector<std::pair<EntityId, tuple_t>>> _new_entity_components;
+template <typename... Cs>
+inline void update_entity_component_map(
+    maecs::EntityId ent_id,
+    maecs::Bitmask ent_bitmask,
+    ankerl::unordered_dense::map<maecs::Bitmask, std::vector<std::pair<maecs::EntityId, EntityComponent<Cs...>>>>& entity_components,
+    EntityComponent<Cs...> const& component_data
+)
+{
+    auto existing_ents_iter = entity_components.find(entity_components);
+    if (existing_ents_iter == end(entity_components))
+    {
+        auto [inserted_iter, inserted] = entity_components.insert({ent_bitmask, {}});
+        // Expects(inserted);
+        existing_ents_iter = inserted_iter;
+    }
+
+    existing_ents_iter->second.push_back({ent_id, component_data});
 }
 
 export namespace maecs {
@@ -250,15 +272,19 @@ export namespace maecs {
             update_entity_bitmask(ent_id, index, _entity_bitmask);
         }
 
-        void new_set(EntityId ent_id, Component<Cs...> const& component)
+        template <typename C>
+        void new_set(EntityId ent_id, C const& component)
         {
-            auto constexpr index = component.index();
+            
+            static_assert(index != std::variant::npos);
             // Expects(index != std::variant_npos);
+            _
 
             auto const component_hash = _type_arrays[index]->has_code();
 
             // We need to move the current component information out
             // of the previous bitmask
+            auto new_bitmask =  (1 << index);
             auto current_tuple_iter = end(_new_entity_components);
             if (auto current_bitmask_iter = _entity_bitmask.find(ent_id); current_bitmask_iter != end(_entity_bitmask))
             {
@@ -266,20 +292,33 @@ export namespace maecs {
                 current_tuple_iter = _new_entity_components.find(current_bitmask_iter->second);
                 // Expects(current_tuple_iter != end(_new_entity_component));
             }
+            else
+            {
+                _entity_bitmask[ent_id] = new_bitmask;
+            }
 
             if (current_tuple_iter != end(_new_entity_components))
             {
-                auto const new_bitmask = current_tuple_iter->first | (1 << index);
+                new_bitmask |= current_tuple_iter->first;
                 auto entity_data = extract(current_tuple_iter);
                 // gonna be difficult to get move semantics right on this
                 // without the hardcoded types with std::optional
                 std::get<index>(entity_data) = get<index>(component);
-
-                // Add the new entity_data to the _new_entity_components[new_bitmask]
-                // if it's not already there
+                update_entity_component_map(ent_id, new_bitmask, _new_entity_components, entity_data);
+                return;
             }
-
+            
+            EntityComponent<Cs...> new_entity_component;
+            get<index>(new_entity_component) = get<index>(component);
+            update_entity_component_map(ent_id, new_bitmask, _new_entity_components, new_entity_component);
             // TODO : Finish this implementation
+        }
+
+        template <typename... Ds>
+        std::vector<std::pair<maecs::EntityId, EntityComponent<Cs...>>>& new_get()
+        {
+            auto const bitmask = bit_mask<Ds...>();
+            return _new_entity_components[bitmask];
         }
 
         template <typename Head, typename... Tail>

@@ -121,8 +121,6 @@ int main(/*int argc, char** argv*/)
     auto const my_circle_id = my_registry.id<Circle>();
     auto const my_position_id = my_registry.id<Position>();
 
-    auto const size_tuples = sizeof(maecs::Registry<Circle, Rect, Position, Colour, Circle, Rect, Position, Colour>::tuple_t);
-
 
     auto const my_id0 = my_registry.bit_mask<Circle>();
     auto const my_id1 = my_registry.bit_mask<Rect>();
@@ -152,6 +150,8 @@ int main(/*int argc, char** argv*/)
         .x = 0,
         .y = 42,
     };
+
+    my_registry.new_set(0, my_rect);
 
     // TODO : need to generate unique entity ids
     // Entities: 0, 1, 2, 3
