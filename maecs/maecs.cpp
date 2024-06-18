@@ -7,6 +7,8 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <ranges>
+#include <span>
 #include <typeinfo>
 #include <type_traits>
 #include <unordered_map>
@@ -16,12 +18,24 @@ module;
 
 export module maecs;
 
+import compile_time;
+
 export namespace maecs
 {
     using EntityId = std::uint64_t;
     using Bitmask = std::uint64_t;
     using ComponentId = decltype(std::declval<std::type_info>().hash_code());
     using ComponentName = decltype(std::declval<std::type_info>().name());
+
+    template <typename... Cs>
+    using ComponentType = std::variant<Cs...>;
+
+
+    struct Entity
+    {
+        EntityId id;
+        std::span<ComponentType> components;
+    };
 } // maecs
 
 /**************************************************
@@ -37,21 +51,6 @@ using ComponentIdMap = ankerl::unordered_dense::map<maecs::ComponentName, std::p
 /// @brief Type for the cache-friendly (although it's not quite) entity-component type
 template <typename... Cs>
 using EntityComponent = std::tuple<std::optional<Cs>...>;
-
-// What happens if Target is not in List types??
-/// @brief Gets the index of a type in the list of templated types
-/// @tparam Target should be the type we want to find the index for
-/// @tparam ListHead first type in the list of template args
-/// @tparam ...ListTails the remaning type of list args
-/// @return std::size_t that represents index of Target in {ListHead, ListTains...}
-template<typename Target, typename ListHead, typename... ListTails>
-constexpr std::size_t get_type_index()
-{
-    if constexpr (std::is_same<Target, ListHead>::value)
-        return 0;
-    else
-        return 1 + get_type_index<Target, ListTails...>();
-}
 
 template <typename C>
 void add_component_id_one(ComponentIdMap& map, std::size_t index)
@@ -117,7 +116,7 @@ inline void update_entity_component_map(
     EntityComponent<Cs...> const& component_data
 )
 {
-    auto existing_ents_iter = entity_components.find(entity_components);
+    auto existing_ents_iter = entity_components.find(ent_bitmask);
     if (existing_ents_iter == end(entity_components))
     {
         auto [inserted_iter, inserted] = entity_components.insert({ent_bitmask, {}});
@@ -276,46 +275,62 @@ export namespace maecs {
         void new_set(EntityId ent_id, C const& component)
         {
             
-            static_assert(index != std::variant::npos);
+            constexpr auto index = compile_time::IndexOf<C, Cs...>::index();
             // Expects(index != std::variant_npos);
-            _
 
-            auto const component_hash = _type_arrays[index]->has_code();
+            auto const component_hash = _type_arrays[index]->hash_code();
 
             // We need to move the current component information out
             // of the previous bitmask
             auto new_bitmask =  (1 << index);
-            auto current_tuple_iter = end(_new_entity_components);
+            auto current_ent_vec_iter = end(_new_entity_components);
             if (auto current_bitmask_iter = _entity_bitmask.find(ent_id); current_bitmask_iter != end(_entity_bitmask))
             {
                 // get the tuple here
-                current_tuple_iter = _new_entity_components.find(current_bitmask_iter->second);
+                current_ent_vec_iter = _new_entity_components.find(current_bitmask_iter->second);
                 // Expects(current_tuple_iter != end(_new_entity_component));
+                // TODO : current_tuple_iter is a iter to a vector<components>
             }
             else
             {
                 _entity_bitmask[ent_id] = new_bitmask;
             }
 
-            if (current_tuple_iter != end(_new_entity_components))
+            if (current_ent_vec_iter != end(_new_entity_components))
             {
-                new_bitmask |= current_tuple_iter->first;
-                auto entity_data = extract(current_tuple_iter);
+                // Linear search for my entity by ID
+                std::vector<std::pair<EntityId, EntityComponent<Cs...>>>& entity_vec = current_ent_vec_iter->second;
+                auto current_tuple_iter = std::find_if(
+                    begin(entity_vec),
+                    end(entity_vec),
+                    [ent_id](auto const& pair){
+                        return pair.first == ent_id;
+                    }
+                );
+                // Expects(current_tuple_iter != end(current_ent_vec_iter));
+
+                new_bitmask |= current_ent_vec_iter->first;
+                
+                // Erase the entity from the list
+                // tuple<o<C1>, o<C2>, ...> = entity_data
+                // o<Cn> = compoennt
+                auto entity_data = entity_vec.erase(current_tuple_iter);
+
                 // gonna be difficult to get move semantics right on this
                 // without the hardcoded types with std::optional
-                std::get<index>(entity_data) = get<index>(component);
-                update_entity_component_map(ent_id, new_bitmask, _new_entity_components, entity_data);
+                std::get<index>(entity_data->second) = component;
+                update_entity_component_map(ent_id, new_bitmask, _new_entity_components, entity_data->second);
                 return;
             }
             
             EntityComponent<Cs...> new_entity_component;
-            get<index>(new_entity_component) = get<index>(component);
+            std::get<index>(new_entity_component) = component;
             update_entity_component_map(ent_id, new_bitmask, _new_entity_components, new_entity_component);
             // TODO : Finish this implementation
         }
 
         template <typename... Ds>
-        std::vector<std::pair<maecs::EntityId, EntityComponent<Cs...>>>& new_get()
+        std::vector<std::pair<EntityId, EntityComponent<Cs...>>>& new_get()
         {
             auto const bitmask = bit_mask<Ds...>();
             return _new_entity_components[bitmask];
@@ -326,11 +341,11 @@ export namespace maecs {
         {
             if constexpr (sizeof...(Tail) == 0)
             {
-                return (1 << get_type_index<Head, Cs...>());
+                return (1 << compile_time::IndexOf<Head, Cs...>::index());
             }
             else
             {
-                return (1 << get_type_index<Head, Cs...>()) | bit_mask<Tail...>();
+                return (1 << compile_time::IndexOf<Head, Cs...>::index()) | bit_mask<Tail...>();
             }
         }
 
@@ -347,7 +362,9 @@ export namespace maecs {
 
         // Wanna create the entity mask -> entity data
         // 011 -> {ent_id, {c1, c2}} = ent_id has components in indexes 0, 1 of the Cs... and the data is in vector
+        // set(ent_id, component) => {c0, c1, ...cn}
         ankerl::unordered_dense::map<Bitmask, std::vector<std::pair<EntityId, tuple_t>>> _new_entity_components;
+        // Sort the entity by id so we have a binary search
 
         // 010 -> {ent_id, {c1}}
         // add c2 to ent_id ?

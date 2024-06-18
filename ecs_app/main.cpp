@@ -128,8 +128,11 @@ int main(/*int argc, char** argv*/)
     auto const my_id3 = my_registry.bit_mask<Colour>();
 
 
+    // std::variant<Circle, Rect> 
     auto const my_composite_id0 = my_registry.bit_mask<Colour, Rect>();
     auto const my_composite_id1 = my_registry.bit_mask<Circle, Position, Rect>();
+
+    auto const size_of_entity = sizeof(std::tuple<std::optional<Circle>, std::optional<Rect>, std::optional<Position>, std::optional<Colour>>);
 
 
     // Create a dummy Rectangle component for an entity
@@ -152,6 +155,18 @@ int main(/*int argc, char** argv*/)
     };
 
     my_registry.new_set(0, my_rect);
+    // auto& my_component_tuple = my_registry.new_get<Rect>()[0].second; // vector<pair<ent_id, comp_tuple>>
+    // auto& my_component_optional = std::get<1>(my_component_tuple);
+    // auto& my_component = *my_component_optional;
+
+
+    my_registry.new_set(0, my_position);
+    auto& my_component_tuple = my_registry.new_get<Position, Rect>()[0].second; // vector<pair<ent_id, comp_tuple>>
+    auto& my_rect_component_optional = std::get<1>(my_component_tuple);
+    auto& my_pos_component_optional = std::get<2>(my_component_tuple);
+    auto& my_rect_component = *my_rect_component_optional;
+    auto& my_pos_component = *my_pos_component_optional;
+
 
     // TODO : need to generate unique entity ids
     // Entities: 0, 1, 2, 3

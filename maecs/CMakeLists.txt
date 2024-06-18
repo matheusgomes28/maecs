@@ -7,7 +7,10 @@ target_sources(maecs
       maecs.cpp
 )
 
-target_link_libraries(maecs PRIVATE unordered_dense::unordered_dense )
+target_link_libraries(maecs
+ PRIVATE
+  maecs::compile_time
+  unordered_dense::unordered_dense )
 
 # if(BUILD_PROFILER)
 #   message(STATUS "Building profiler")
@@ -16,3 +19,5 @@ target_link_libraries(maecs PRIVATE unordered_dense::unordered_dense )
 # else()
 #   message(STATUS "Profiler not build")
 # endif()
+
+add_library(maecs::maecs ALIAS maecs)
