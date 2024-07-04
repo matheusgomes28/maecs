@@ -1,6 +1,7 @@
 module;
 
 #include <ankerl/unordered_dense.h>
+#include <gsl/assert>
 
 #include <algorithm>
 #include <array>
@@ -30,12 +31,6 @@ export namespace maecs
     template <typename... Cs>
     using ComponentType = std::variant<Cs...>;
 
-
-    struct Entity
-    {
-        EntityId id;
-        std::span<ComponentType> components;
-    };
 } // maecs
 
 /**************************************************
@@ -92,7 +87,6 @@ inline void update_entity_bitmask(
 {
     static_assert(sizeof(std::size_t) == sizeof(std::uint64_t));
 
-    // Call the entity update function here
     auto const bitmask = (0b1 << component_index);
 
     // TODO : make this into a function (update_bitmask(entity, new_bitmask))
@@ -116,16 +110,47 @@ inline void update_entity_component_map(
     EntityComponent<Cs...> const& component_data
 )
 {
+    // Expects(ent_bitmask == entity_bitmask.find(ent_id)->second);
     auto existing_ents_iter = entity_components.find(ent_bitmask);
-    if (existing_ents_iter == end(entity_components))
-    {
-        auto [inserted_iter, inserted] = entity_components.insert({ent_bitmask, {}});
-        // Expects(inserted);
-        existing_ents_iter = inserted_iter;
-    }
+    // if (existing_ents_iter == end(entity_components))
+    // {
+    //     entity_components[ent_bitmask] = {};
+    //     // auto [inserted_iter, inserted] = entity_components.insert({ent_bitmask, {}});
+    //     // Ensures(inserted);
+    //     // Ensures(inserted_iter != end(entity_components));
+        
+    //     // existing_ents_iter = inserted_iter;
+    // }
 
-    existing_ents_iter->second.push_back({ent_id, component_data});
+    entity_components[ent_bitmask].push_back({ent_id, component_data});
 }
+
+constexpr std::size_t count_bits_set(std::size_t bitmask)
+{
+    std::size_t sum = 0;
+    for (std::size_t i = 0; i < std::numeric_limits<std::size_t>::digits; ++i)
+    {
+        sum += (bitmask & (1 << i)) ? 1 : 0;
+    }
+    return sum;
+}
+
+// count how many bits b2 has set on left of b1
+constexpr std::size_t bits_to_left(std::size_t b1, std::size_t b2)
+{
+    std::size_t count = 0;
+    for (int i = std::numeric_limits<std::size_t>::digits - 1; i >= 0; --i)
+    {
+        auto const b2_mask = (b2 >> i);
+        if (b1 >> i)
+        {
+            return count;
+        }
+        count += (b2_mask & 1) ? 1 : 0;
+    }
+    return count;
+}
+
 
 export namespace maecs {
     EntityId generate_entity_id()
@@ -142,7 +167,11 @@ export namespace maecs {
     class Registry {
     public:
 
+        // TODO : if we have many components then std::tuple<optional<Cs>...> is gonna be big
+        //        if we have std::variant<C1, C2, ..., Cn> has size at most max(sizeof(Cs)...)
         using tuple_t = std::tuple<std::optional<Cs>...>;
+
+        using variant_t = std::variant<Cs...>;
 
         // Whenever we init Registry, we want to iterate over the
         // types of Cs... and store the <name, id> in the _component_ids;
@@ -158,7 +187,7 @@ export namespace maecs {
         /// @return a valid optional containing the component reference if
         /// the entity has that component, nulopt otherwise
         template <typename C>
-        std::optional<C> get(EntityId entity_id) const
+        [[deprecated]] std::optional<C> get(EntityId entity_id) const
         {
             // Get the component ID for this type
             static const auto component_id = typeid(C).hash_code();
@@ -255,7 +284,7 @@ export namespace maecs {
         // TODO : remove component from entity
 
         // const auto entities = registry.get({Square, Circle});       
-        void set(EntityId ent_id, Component<Cs...> const& component)
+        [[deprecated]] void set(EntityId ent_id, Component<Cs...> const& component)
         {
             auto const index = component.index();
             auto const component_hash = _type_arrays[index]->hash_code();
@@ -276,8 +305,8 @@ export namespace maecs {
         {
             
             constexpr auto index = compile_time::IndexOf<C, Cs...>::index();
-            // Expects(index != std::variant_npos);
 
+            Expects(index < _type_arrays.size());
             auto const component_hash = _type_arrays[index]->hash_code();
 
             // We need to move the current component information out
@@ -288,8 +317,6 @@ export namespace maecs {
             {
                 // get the tuple here
                 current_ent_vec_iter = _new_entity_components.find(current_bitmask_iter->second);
-                // Expects(current_tuple_iter != end(_new_entity_component));
-                // TODO : current_tuple_iter is a iter to a vector<components>
             }
             else
             {
@@ -314,12 +341,16 @@ export namespace maecs {
                 // Erase the entity from the list
                 // tuple<o<C1>, o<C2>, ...> = entity_data
                 // o<Cn> = compoennt
-                auto entity_data = entity_vec.erase(current_tuple_iter);
 
                 // gonna be difficult to get move semantics right on this
                 // without the hardcoded types with std::optional
-                std::get<index>(entity_data->second) = component;
-                update_entity_component_map(ent_id, new_bitmask, _new_entity_components, entity_data->second);
+                EntityComponent<Cs...> moved_component = std::move(current_tuple_iter->second);
+                std::get<index>(moved_component) = component;
+
+                update_entity_component_map(ent_id, new_bitmask, _new_entity_components, moved_component);
+                // TODO : This is copying everything!!!!!
+
+                auto entity_data = entity_vec.erase(current_tuple_iter);
                 return;
             }
             
@@ -329,6 +360,7 @@ export namespace maecs {
             // TODO : Finish this implementation
         }
 
+        // TODO : Maybe we should return a view to the data instead
         template <typename... Ds>
         std::vector<std::pair<EntityId, EntityComponent<Cs...>>>& new_get()
         {
@@ -336,8 +368,124 @@ export namespace maecs {
             return _new_entity_components[bitmask];
         }
 
+        // TODO : lets worry about the hard case of unioning things
+        //        i.e. entities(0b0101) = entities(0b0101) + entities(0b1101) + entities(0b0111) + entities(0b1111)
+        /// @brief Gets all the entities with the specified components
+        /// set.
+        /// @tparam ...Ds the component classes to get
+        /// @return a view into the entities which contain all these components
+        template <typename... Ds>
+        std::optional<std::span<variant_t const>> newest_get() const
+        {
+            auto constexpr bitmask = bit_mask<Ds...>();
+            
+            // find the stuff and return it
+            auto const found = _variant_components.find(bitmask);
+            if (found == end(_variant_components))
+            {
+                return std::nullopt;
+            }
+
+            return found->second;
+        }
+
+        template <typename D>
+        bool newest_set(EntityId ent_id, D const& component)
+        {
+            auto constexpr component_bitmask = bit_mask<D>();
+            auto const prev_ent_bitmask = _entity_bitmask[ent_id];
+
+            // TODO : If entity is new, assign it to some component
+            if (prev_ent_bitmask == 0)
+            {
+                _variant_components[component_bitmask] = {{ent_id, component}};
+                return true;
+            }
+
+            if (!(prev_ent_bitmask & component_bitmask))
+            {
+                // We should probably cache this when the entity is added,
+                // i.e. where in the vector the start of the entity is
+                auto prev_component_entities = _variant_components.find(prev_ent_bitmask);
+                Expects(prev_component_entities != end(_variant_components));
+
+                auto const& component_entity_vector = prev_component_entities->second;
+                auto found = std::find_if(begin(component_entity_vector), end(component_entity_vector), [](auto const& ent_component_pair){
+                    if (ent_component_pair.ent_id)
+                    {
+                        return true;
+                    }
+                });
+                Expects(found != end(component_entity_vector));
+
+                // get however many other types we need
+                auto const prev_comp_count = count_bits_set(prev_ent_bitmask);
+
+                // move previous items + the new component
+                auto& new_component_vector = _variant_components[prev_ent_bitmask | component_bitmask];
+                std::move(found, found + prev_comp_count, back_inserter(new_component_vector));
+                auto const component_index = bits_to_left(component_bitmask, prev_ent_bitmask);
+                
+                // element needs to be inserted within the previous components, wherever
+                // it's meant to be with relation to bitmask position
+                new_component_vector.insert(begin(new_component_vector) + new_component_vector.size() - prev_comp_count + component_index, {ent_id, component});
+                
+                // Finally, remove the moved elements
+                component_entity_vector.erase(found, found + prev_comp_count);
+                return true;
+            }
+
+            // If the entity already has those components
+
+            auto prev_component_entities = _variant_components.find(prev_ent_bitmask);
+            Expects(prev_component_entities != end(_variant_components));
+
+            auto const& component_entity_vector = prev_component_entities->second;
+            auto found = std::find_if(begin(component_entity_vector), end(component_entity_vector), [](auto const& ent_component_pair){
+                if (ent_component_pair.ent_id)
+                {
+                    return true;
+                }
+            });
+            Expects(found != end(component_entity_vector));
+            auto const component_index = bits_to_left(component_bitmask, prev_ent_bitmask);
+            auto this_component = std::next(found, component_index);
+            Expects(this_component != end(component_entity_vector));
+            this_component->second.second = component;
+            return true;
+        }
+
+        template <typename... Ds>
+        std::vector<std::pair<EntityId, EntityComponent<Cs...>>> const& new_get() const
+        {
+            auto const bitmask = bit_mask<Ds...>();
+            auto const found = _new_entity_components.find(bitmask);
+
+            // Should be a runtime check
+            Expects(found != end(_new_entity_components));
+            return found->second;
+        }
+
+        template <typename C>
+        C& entity_component(EntityComponent<Cs...>& component_tuple)
+        {
+            constexpr std::size_t index = compile_time::IndexOf<C, Cs...>::index();
+            auto& component_optional = std::get<index>(component_tuple);
+            Expects(component_optional);
+            return *component_optional;
+        }
+
+        template <typename C>
+        C const& entity_component(EntityComponent<Cs...> const& component_tuple) const
+        {
+            constexpr std::size_t index = compile_time::IndexOf<C, Cs...>::index();
+            auto& component_optional = std::get<index>(component_tuple);
+            Expects(component_optional);
+            return *component_optional;
+        }
+
         template <typename Head, typename... Tail>
-        constexpr std::size_t bit_mask()
+        constexpr std::size_t bit_mask() const
         {
             if constexpr (sizeof...(Tail) == 0)
             {
@@ -355,6 +503,7 @@ export namespace maecs {
         ankerl::unordered_dense::map<ComponentName, std::pair<ComponentId, std::size_t>> _component_ids;
 
         // This will store the entity-component data
+        // If we use std::variant we will need to store more than one entry per entity
         ankerl::unordered_dense::map<ComponentId, std::vector<std::pair<EntityId, Component<Cs...>>>> _entities;
 
         // Store all the current entity -> bitmask values
@@ -365,6 +514,8 @@ export namespace maecs {
         // set(ent_id, component) => {c0, c1, ...cn}
         ankerl::unordered_dense::map<Bitmask, std::vector<std::pair<EntityId, tuple_t>>> _new_entity_components;
         // Sort the entity by id so we have a binary search
+
+        ankerl::unordered_dense::map<Bitmask, std::vector<std::pair<EntityId, variant_t>>> _variant_components;
 
         // 010 -> {ent_id, {c1}}
         // add c2 to ent_id ?

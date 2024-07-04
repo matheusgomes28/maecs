@@ -76,14 +76,25 @@ bool draw(maecs::Registry<Circle, Rect, Position, Colour>const & registry)
         // We're going to get all the entities with circles
         // and draw these circles on the screen
         auto const my_colour_id = registry.id<Colour>();
-        
         auto const my_circle_id = registry.id<Circle>();
+        // registry.get is deprecated
         auto const entities_with_circle = registry.get({*my_circle_id, *my_colour_id});
+
+        //void DrawCircle(int centerX, int centerY, float radius, Color color);
+        auto const& drawable_circle_entities = registry.new_get<Circle, Position, Colour>();
+        for (auto const& [entity_id, component_tuple] : drawable_circle_entities)
+        {
+            // Firstly get the 
+            auto const& circle_component = registry.entity_component<Circle>(component_tuple);
+            auto const& position_component = registry.entity_component<Position>(component_tuple);
+            auto const& colour_component = registry.entity_component<Colour>(component_tuple);
+            DrawCircle(circle_component.center_x, circle_component.center_y, circle_component.radius, colour_table[colour_component.id]);
+        }
 
         // Rendering loop system for the circle
         for (auto const& entity : entities_with_circle)
         {
-            //void DrawCircle(int centerX, int centerY, float radius, Color color);
+
             std::optional<Circle> draw_circle = registry.get<Circle>(entity);
             std::optional<Colour> draw_colour = registry.get<Colour>(entity);
             // DrawCircle(draw_circle->center_x, draw_circle->center_y, draw_circle->radius, colour_table[draw_colour->id]);
@@ -155,9 +166,9 @@ int main(/*int argc, char** argv*/)
     };
 
     my_registry.new_set(0, my_rect);
-    // auto& my_component_tuple = my_registry.new_get<Rect>()[0].second; // vector<pair<ent_id, comp_tuple>>
-    // auto& my_component_optional = std::get<1>(my_component_tuple);
-    // auto& my_component = *my_component_optional;
+    my_registry.new_set(0, my_circle);
+    my_registry.new_set(0, my_position);
+    my_registry.new_set(0, Colour{.id = 2});
 
 
     my_registry.new_set(0, my_position);
