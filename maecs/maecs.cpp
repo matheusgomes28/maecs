@@ -368,6 +368,19 @@ export namespace maecs {
             return _new_entity_components[bitmask];
         }
 
+        /* TODO : Let's encode the type returned here
+        template <typename... Cs, typename... Ds>
+        class EntityView
+        {
+            EntityView(std::span<std::variant<Cs...>> data)
+
+        private:
+            std::span<std::variant<Cs...>> data;
+        };
+
+        // usage: EntityView<Circle, Square>(the_variant<Circle, Square, Position>...);
+        */
+
         // TODO : lets worry about the hard case of unioning things
         //        i.e. entities(0b0101) = entities(0b0101) + entities(0b1101) + entities(0b0111) + entities(0b1111)
         /// @brief Gets all the entities with the specified components
@@ -375,7 +388,7 @@ export namespace maecs {
         /// @tparam ...Ds the component classes to get
         /// @return a view into the entities which contain all these components
         template <typename... Ds>
-        std::optional<std::span<variant_t const>> newest_get() const
+        std::optional<std::span<std::pair<EntityId, variant_t> const>> newest_get() const
         {
             auto constexpr bitmask = bit_mask<Ds...>();
             
@@ -386,13 +399,14 @@ export namespace maecs {
                 return std::nullopt;
             }
 
-            return found->second;
+            std::span<std::pair<EntityId, variant_t> const> result{begin(found->second), end(found->second)};
+            return result;
         }
 
         template <typename D>
         bool newest_set(EntityId ent_id, D const& component)
         {
-            auto constexpr component_bitmask = bit_mask<D>();
+            static auto constexpr component_bitmask = bit_mask<D>();
             auto const prev_ent_bitmask = _entity_bitmask[ent_id];
 
             // TODO : If entity is new, assign it to some component
@@ -409,12 +423,9 @@ export namespace maecs {
                 auto prev_component_entities = _variant_components.find(prev_ent_bitmask);
                 Expects(prev_component_entities != end(_variant_components));
 
-                auto const& component_entity_vector = prev_component_entities->second;
-                auto found = std::find_if(begin(component_entity_vector), end(component_entity_vector), [](auto const& ent_component_pair){
-                    if (ent_component_pair.ent_id)
-                    {
-                        return true;
-                    }
+                auto& component_entity_vector = prev_component_entities->second;
+                auto found = std::find_if(begin(component_entity_vector), end(component_entity_vector), [=](auto const& ent_component_pair){
+                    return ent_component_pair.first == ent_id;
                 });
                 Expects(found != end(component_entity_vector));
 
@@ -440,18 +451,15 @@ export namespace maecs {
             auto prev_component_entities = _variant_components.find(prev_ent_bitmask);
             Expects(prev_component_entities != end(_variant_components));
 
-            auto const& component_entity_vector = prev_component_entities->second;
-            auto found = std::find_if(begin(component_entity_vector), end(component_entity_vector), [](auto const& ent_component_pair){
-                if (ent_component_pair.ent_id)
-                {
-                    return true;
-                }
+            auto& component_entity_vector = prev_component_entities->second;
+            auto found = std::find_if(begin(component_entity_vector), end(component_entity_vector), [=](auto const& ent_component_pair){
+                return ent_component_pair.first == ent_id;
             });
             Expects(found != end(component_entity_vector));
             auto const component_index = bits_to_left(component_bitmask, prev_ent_bitmask);
             auto this_component = std::next(found, component_index);
             Expects(this_component != end(component_entity_vector));
-            this_component->second.second = component;
+            std::get<D>(this_component->second) = component;
             return true;
         }
 
@@ -485,7 +493,7 @@ export namespace maecs {
         }
 
         template <typename Head, typename... Tail>
-        constexpr std::size_t bit_mask() const
+        static constexpr std::size_t bit_mask()
         {
             if constexpr (sizeof...(Tail) == 0)
             {
