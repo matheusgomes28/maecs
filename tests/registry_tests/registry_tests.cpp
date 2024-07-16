@@ -40,10 +40,11 @@ TEST(RegistryTests, SetsComponent)
     ASSERT_TRUE(maybe_component);
     ASSERT_EQ(maybe_component->size(), 1);
 
-    auto const& [ent_id, component_v] = (*maybe_component)[0];
-    ASSERT_EQ(ent_id, 0);
+    auto const entity_view = (*maybe_component)[0];
+    ASSERT_EQ(entity_view.id(), 0);
 
-    auto const& component_data = std::get<Rectangle>(component_v);
+    
+    auto const& component_data = entity_view.component<Rectangle>();
     ASSERT_EQ(component_data.width, 10);
     ASSERT_EQ(component_data.height, 10);
 }
@@ -70,11 +71,16 @@ TEST(RegistryTests, SetsMultipleComponents)
     ASSERT_TRUE(maybe_component);
     ASSERT_EQ(maybe_component->size(), 1);
 
-    auto const& [ent_id, component_v] = (*maybe_component)[0];
-    ASSERT_EQ(ent_id, 0);
+    auto const entity_view = (*maybe_component)[0];
+    ASSERT_EQ(entity_view.id(), 0);
 
-    auto const& component_data = std::get<Rectangle>(component_v);
-    ASSERT_EQ(component_data.width, 10);
-    ASSERT_EQ(component_data.height, 10);
+    auto const& rectangle_data = entity_view.component<Rectangle>();
+    ASSERT_EQ(rectangle_data.width, 10);
+    ASSERT_EQ(rectangle_data.height, 10);
+
+    auto const& circle_data = entity_view.component<Circle>();
+    ASSERT_EQ(circle_data.center_x, -10);
+    ASSERT_EQ(circle_data.center_y, -1);
+    ASSERT_EQ(circle_data.radius, 52);
 
 }

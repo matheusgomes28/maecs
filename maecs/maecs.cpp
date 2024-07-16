@@ -130,7 +130,7 @@ constexpr std::size_t count_bits_set(std::size_t bitmask)
     std::size_t sum = 0;
     for (std::size_t i = 0; i < std::numeric_limits<std::size_t>::digits; ++i)
     {
-        sum += (bitmask & (1 << i)) ? 1 : 0;
+        sum += (bitmask & (1ul << i)) ? 1 : 0;
     }
     return sum;
 }
@@ -162,6 +162,48 @@ export namespace maecs {
     template <typename... Cs>
     using Component = std::variant<Cs...>;
     // std::variant<Square, Circle> -> Square has id 0, Circle has id 1
+
+    /* TODO : Let's encode the type returned here*/
+    // Shoudl probably move this to "compile_time"
+    template <typename... Types>
+    struct TupleTypes
+    {
+    };
+
+    // Disable this if not through our TupleTypes
+    template <typename... Types>
+    class EntityView;
+
+    template <typename... Cs, typename... Ds>
+    class EntityView<TupleTypes<Cs...>, TupleTypes<Ds...>>
+    {
+    public:
+        using variant_type = std::variant<Cs...>;
+        EntityView(std::span<std::pair<EntityId, variant_type>> data)
+            : _data{data}
+        {
+        }
+
+        // Do we want to return the reference to the object here?
+        template<typename C>
+        C component() const
+        {
+            constexpr auto position = compile_time::IndexOf<C, Ds...>::index();
+            return std::get<C>(_data[position].second);
+        }
+
+        EntityId id() const
+        {
+            // Quick bug for now, need to handle case where
+            // we don't have any entities here
+            return _data[0].first;
+        }
+
+    private:
+        std::span<std::pair<EntityId, std::variant<Cs...>>> _data;
+    };
+
+    // usage: EntityView<Circle, Square>(the_variant<Circle, Square, Position>...);
     
     template <typename... Cs>
     class Registry {
@@ -368,19 +410,6 @@ export namespace maecs {
             return _new_entity_components[bitmask];
         }
 
-        /* TODO : Let's encode the type returned here
-        template <typename... Cs, typename... Ds>
-        class EntityView
-        {
-            EntityView(std::span<std::variant<Cs...>> data)
-
-        private:
-            std::span<std::variant<Cs...>> data;
-        };
-
-        // usage: EntityView<Circle, Square>(the_variant<Circle, Square, Position>...);
-        */
-
         // TODO : lets worry about the hard case of unioning things
         //        i.e. entities(0b0101) = entities(0b0101) + entities(0b1101) + entities(0b0111) + entities(0b1111)
         /// @brief Gets all the entities with the specified components
@@ -388,19 +417,27 @@ export namespace maecs {
         /// @tparam ...Ds the component classes to get
         /// @return a view into the entities which contain all these components
         template <typename... Ds>
-        std::optional<std::span<std::pair<EntityId, variant_t> const>> newest_get() const
+        std::optional<std::vector<EntityView<TupleTypes<Cs...>, TupleTypes<Ds...>>>> newest_get()
         {
             auto constexpr bitmask = bit_mask<Ds...>();
             
             // find the stuff and return it
-            auto const found = _variant_components.find(bitmask);
+            auto found = _variant_components.find(bitmask);
             if (found == end(_variant_components))
             {
                 return std::nullopt;
             }
 
-            std::span<std::pair<EntityId, variant_t> const> result{begin(found->second), end(found->second)};
-            return result;
+            std::vector<EntityView<TupleTypes<Cs...>, TupleTypes<Ds...>>> entity_views;
+            std::size_t const num_components = sizeof...(Ds);
+            for (std::size_t i = 0; i < found->second.size(); i += num_components)
+            {
+                std::span<std::pair<EntityId, std::variant<Cs...>>> view{begin(found->second) + i, num_components};
+                EntityView<TupleTypes<Cs...>, TupleTypes<Ds...>> entity_view{view};
+                entity_views.push_back(entity_view);
+            }
+
+            return entity_views;
         }
 
         template <typename D>
@@ -408,6 +445,7 @@ export namespace maecs {
         {
             static auto constexpr component_bitmask = bit_mask<D>();
             auto const prev_ent_bitmask = _entity_bitmask[ent_id];
+            _entity_bitmask[ent_id] = prev_ent_bitmask | component_bitmask;
 
             // TODO : If entity is new, assign it to some component
             if (prev_ent_bitmask == 0)
@@ -435,14 +473,16 @@ export namespace maecs {
                 // move previous items + the new component
                 auto& new_component_vector = _variant_components[prev_ent_bitmask | component_bitmask];
                 std::move(found, found + prev_comp_count, back_inserter(new_component_vector));
-                auto const component_index = bits_to_left(component_bitmask, prev_ent_bitmask);
+                auto const component_index = bits_to_left(prev_ent_bitmask, component_bitmask);
                 
                 // element needs to be inserted within the previous components, wherever
                 // it's meant to be with relation to bitmask position
                 new_component_vector.insert(begin(new_component_vector) + new_component_vector.size() - prev_comp_count + component_index, {ent_id, component});
                 
                 // Finally, remove the moved elements
-                component_entity_vector.erase(found, found + prev_comp_count);
+                // component_entity_vector.erase(found, found + prev_comp_count);
+                // Do we not need to call these elements?
+                
                 return true;
             }
 
