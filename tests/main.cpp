@@ -1,7 +1,6 @@
-import maecs;
+#include <maecs/maecs.hpp>
 
 #include <benchmark/benchmark.h>
-
 
 struct Circle
 {
@@ -9,7 +8,6 @@ struct Circle
     int center_y;
     int radius;
 };
-
 
 template <typename... Cs>
 void create_entity_with_component(maecs::Registry<Cs...>& registry)
@@ -21,9 +19,8 @@ void create_entity_with_component(maecs::Registry<Cs...>& registry)
         .radius = 50
     };
 
-    registry.set(entity_id, component);
+    // registry.set(entity_id, component);
 }
-
 
 // TODO : Benchmark the entity component add function
 static void BenchmarkEntitySetOneComponent(benchmark::State& state) {

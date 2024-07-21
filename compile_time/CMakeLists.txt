@@ -1,9 +1,10 @@
 
-add_library(compile_time)
+add_library(compile_time INTERFACE)
 target_sources(compile_time
-  PUBLIC
-    FILE_SET CXX_MODULES FILES
-      compile_time.cpp
+ PUBLIC
+  include/compile_time/compile_time.hpp
 )
+
+target_include_directories(compile_time INTERFACE include)
 
 add_library(maecs::compile_time ALIAS compile_time)

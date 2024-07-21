@@ -1,4 +1,4 @@
-import maecs;
+#include <maecs/maecs.hpp>
 
 // TODO : Turn this into a proper C++ module
 #include <gtest/gtest.h>

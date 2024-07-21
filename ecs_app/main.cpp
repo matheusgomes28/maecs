@@ -1,4 +1,4 @@
-import maecs;
+#include <maecs/maecs.hpp>
 
 #include <raylib.h>
 
@@ -64,7 +64,7 @@ namespace
 
 
 // TODO mutex to protect memory
-bool draw(maecs::Registry<Circle, Rect, Position, Colour>const & registry)
+bool draw(maecs::Registry<Circle, Rect, Position, Colour>& registry)
 {
     InitWindow(512, 512, "6502 Graphics");
     while (!WindowShouldClose())
@@ -78,40 +78,24 @@ bool draw(maecs::Registry<Circle, Rect, Position, Colour>const & registry)
         auto const my_colour_id = registry.id<Colour>();
         auto const my_circle_id = registry.id<Circle>();
         // registry.get is deprecated
-        auto const entities_with_circle = registry.get({*my_circle_id, *my_colour_id});
+        
+        // TODO : newest get should support some sort of const correctness
+        // auto const entities_with_circle = registry.newest_get<Circle, Colour>();
+
+        auto entities_with_circle = registry.newest_get<Circle, Colour>();
 
         //void DrawCircle(int centerX, int centerY, float radius, Color color);
-        auto const& drawable_circle_entities = registry.new_get<Circle, Position, Colour>();
-        for (auto const& [entity_id, component_tuple] : drawable_circle_entities)
+        
+        auto const& drawable_circle_entities = registry.newest_get<Circle, Position, Colour>();
+        for (auto const& entity_view : *drawable_circle_entities)
         {
             // Firstly get the 
-            auto const& circle_component = registry.entity_component<Circle>(component_tuple);
-            auto const& position_component = registry.entity_component<Position>(component_tuple);
-            auto const& colour_component = registry.entity_component<Colour>(component_tuple);
-            DrawCircle(circle_component.center_x, circle_component.center_y, circle_component.radius, colour_table[colour_component.id]);
+            // auto const& circle_component = registry.entity_component<Circle>(component_tuple);
+            // auto const& position_component = registry.entity_component<Position>(component_tuple);
+            // auto const& colour_component = registry.entity_component<Colour>(component_tuple);
+            // DrawCircle(circle_component.center_x, circle_component.center_y, circle_component.radius, colour_table[colour_component.id]);
         }
 
-        // Rendering loop system for the circle
-        for (auto const& entity : entities_with_circle)
-        {
-
-            std::optional<Circle> draw_circle = registry.get<Circle>(entity);
-            std::optional<Colour> draw_colour = registry.get<Colour>(entity);
-            // DrawCircle(draw_circle->center_x, draw_circle->center_y, draw_circle->radius, colour_table[draw_colour->id]);
-        }
-
-        auto const my_rect_id = registry.id<Rect>();
-        auto const entities_with_rect = registry.get({*my_rect_id, *my_colour_id});
-
-        // Rendering loop system for the square
-        for (auto const& entity : entities_with_circle)
-        {
-            //DrawRectangle(int posX, int posY, int width, int height, Color color); 
-            std::optional<Rect> draw_rect = registry.get<Rect>(entity);
-            std::optional<Colour> draw_colour = registry.get<Colour>(entity);
-
-            DrawRectangle(draw_rect->left, draw_rect->top, draw_rect->width, draw_rect->height, colour_table[draw_colour->id]);
-        }
         EndDrawing();
 
         // Make sure we only draw at most 30 times per second
@@ -165,42 +149,7 @@ int main(/*int argc, char** argv*/)
         .y = 42,
     };
 
-    my_registry.new_set(0, my_rect);
-    my_registry.new_set(0, my_circle);
-    my_registry.new_set(0, my_position);
-    my_registry.new_set(0, Colour{.id = 2});
-
-
-    my_registry.new_set(0, my_position);
-    auto& my_component_tuple = my_registry.new_get<Position, Rect>()[0].second; // vector<pair<ent_id, comp_tuple>>
-    auto& my_rect_component_optional = std::get<1>(my_component_tuple);
-    auto& my_pos_component_optional = std::get<2>(my_component_tuple);
-    auto& my_rect_component = *my_rect_component_optional;
-    auto& my_pos_component = *my_pos_component_optional;
-
-
-    // TODO : need to generate unique entity ids
-    // Entities: 0, 1, 2, 3
-    // <entity, {component}> : [<0: {circle, rect}>, <1: {position}>, <2: {}>, <3: {position, rect}>]
-    // Tests:
-    // - select ents with {circle} -> 0
-    // - select ents with {rect} -> 0, 3
-    // - select ents with {position} -> 1, 3
-    my_registry.set(0, my_rect);
-    my_registry.set(0, my_circle);
-    my_registry.set(0, Colour{.id= 2});
-    my_registry.set(1, my_position);
-    my_registry.set(1, Rect{.top = 300, .left = 400, .width = 50, .height = 50});
-    my_registry.set(1, Colour{.id= 10});
-    my_registry.set(3, my_position);
-    my_registry.set(3, my_rect);
-    my_registry.set(3, Circle{.center_x = 512, .center_y = 512, .radius = 200});
-    my_registry.set(3, Colour{.id= 3});
-
-    auto const entities_with_circle = my_registry.get({*my_circle_id});
-    auto const entities_with_rect = my_registry.get({*my_rect_id});
-    auto const entities_with_pos = my_registry.get({*my_position_id});
-
+    // TODO : We need some tests to get the stuff here
 
     draw(my_registry);
 }
